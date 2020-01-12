@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
 
+import argparse
+import os
 import sys
 import time
 from functools import partial
@@ -8,7 +10,11 @@ from subprocess import run
 from tempfile import NamedTemporaryFile
 
 
-fn = sys.argv[1]
+args = argparse.ArgumentParser(description="Trim video(+audio) clip, based on output from mpdecimate filter")
+args.add_argument("--skip", type=int, help="Skip trimming, if less than SKIP parts found")
+args.add_argument("--keep", action="store_true", help="Keep original file")
+args.add_argument("filepath", help="File to trim")
+args = args.parse_args()
 
 
 def prof(s):
@@ -30,7 +36,7 @@ def _ffmpeg(fi, co, *args):
     return run(["ffmpeg", "-i", fi, *args], check=True, capture_output=co)
 
 
-ffmpeg = profd(partial(_ffmpeg, fn))
+ffmpeg = profd(partial(_ffmpeg, args.filepath))
 
 
 def trim(s, e, i, b1=b"v", b2=b""):
@@ -75,7 +81,7 @@ def get_dframes(mpdecimate):
 
 
 dframes2 = get_dframes(ffmpeg(True, "-vf", "mpdecimate=hi=576", "-loglevel", "debug", "-f", "null", "-").stderr)
-if len(dframes2) < 2:
+if args.skip and len(dframes2) < args.skip:
     print("less than 2 parts detected, avoiding re-encode")
     sys.exit(2)
 
@@ -89,10 +95,13 @@ with NamedTemporaryFile(prefix="mpdecimate_trim.") as fg:
     fg.write(b"concat=n=%d:a=1[vout][aout]" % len(dframes2))
     fg.flush()
 
-    fout, ext = path.splitext(fn)
+    fout, ext = path.splitext(args.filepath)
     ffmpeg(
         False,
         "-filter_complex_script", fg.name,
         "-map", "[vout]", "-map", "[aout]",
         "-c:v", "libx265", "-preset", "fast", "-crf", "33", f"{fout}.trimmed{ext}",
     )
+
+    if not args.keep:
+        os.remove(args.filepath)
