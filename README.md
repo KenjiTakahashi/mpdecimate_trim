@@ -6,17 +6,19 @@ Note also that some variables, such as mpdecimate thresholds or output codec set
 
 # Usage
 
-Needs `Python3.6+` and `ffmpeg`.
+Needs `Python3.7+` and `ffmpeg`.
 
 ```bash
-$ mpdecimate_trim.py [--skip SKIP] [--keep] <filepath>
+$ mpdecimate_trim.py [--skip SKIP] [--keep] [--vaapi <render_device_filepath>] <filepath>
 ```
 
-This will take file at `<filepath>`, detect frames with certain similarity, re-encode it with them removed (using `libx265`) and delete the original file.
+This will take file at `<filepath>`, detect frames with certain similarity, re-encode it with them removed (using `libx265`/`hevc_vaapi`) and delete the original file.
 
 The `--keep` switch makes it keep the original.
 
 By default, re-encode happens even if no fragments to trim are found. This can be adjusted by setting `--skip` to minimum amount of remaining clip parts (e.g. `<=1` is equivalent to default, `2` means 1 trimmed fragment, and so on).
+
+The `--vaapi` option enables [VA-API](https://trac.ffmpeg.org/wiki/Hardware/VAAPI) based hardware accelerated transcoding. Note that the script does not check whether supplied input and/or available GPU are capable of performing the transcode, if they are not the process will fail.
 
 # vs_decimate?
 

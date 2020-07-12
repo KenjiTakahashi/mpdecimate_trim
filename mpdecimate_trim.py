@@ -10,11 +10,12 @@ from subprocess import run
 from tempfile import NamedTemporaryFile
 
 
-args = argparse.ArgumentParser(description="Trim video(+audio) clip, based on output from mpdecimate filter")
-args.add_argument("--skip", type=int, help="Skip trimming, if less than SKIP parts found")
-args.add_argument("--keep", action="store_true", help="Keep original file")
-args.add_argument("filepath", help="File to trim")
-args = args.parse_args()
+cargs = argparse.ArgumentParser(description="Trim video(+audio) clip, based on output from mpdecimate filter")
+cargs.add_argument("--skip", type=int, help="Skip trimming, if less than SKIP parts found")
+cargs.add_argument("--keep", action="store_true", help="Keep original file")
+cargs.add_argument("--vaapi", type=str, help="Use VA-API device for hardware accelerated transcoding")
+cargs.add_argument("filepath", help="File to trim")
+cargs = cargs.parse_args()
 
 
 def prof(s):
@@ -32,11 +33,12 @@ def profd(f):
     return a
 
 
-def _ffmpeg(fi, co, *args):
-    return run(["ffmpeg", "-i", fi, *args], check=True, capture_output=co)
+def _ffmpeg(fi, co, *args, vaapi=None):
+    hwargs = ["-hwaccel", "vaapi", "-hwaccel_device", vaapi, "-hwaccel_output_format", "vaapi"] if vaapi else []
+    return run(["ffmpeg", *hwargs, "-i", fi, *args], check=True, capture_output=co)
 
 
-ffmpeg = profd(partial(_ffmpeg, args.filepath))
+ffmpeg = profd(partial(_ffmpeg, cargs.filepath))
 
 
 def trim(s, e, i, b1=b"v", b2=b""):
@@ -81,9 +83,15 @@ def get_dframes(mpdecimate):
 
 
 dframes2 = get_dframes(ffmpeg(True, "-vf", "mpdecimate=hi=576", "-loglevel", "debug", "-f", "null", "-").stderr)
-if args.skip and len(dframes2) < args.skip:
+if cargs.skip and len(dframes2) < cargs.skip:
     print("less than 2 parts detected, avoiding re-encode")
     sys.exit(2)
+
+
+def get_enc_args():
+    if cargs.vaapi:
+        return ["hevc_vaapi", "-qp", "23"]
+    return ["libx265", "-preset", "fast", "-crf", "30"]
 
 with NamedTemporaryFile(prefix="mpdecimate_trim.") as fg:
     for i, (s, e) in enumerate(dframes2):
@@ -95,13 +103,15 @@ with NamedTemporaryFile(prefix="mpdecimate_trim.") as fg:
     fg.write(b"concat=n=%d:a=1[vout][aout]" % len(dframes2))
     fg.flush()
 
-    fout, ext = path.splitext(args.filepath)
+    fout, ext = path.splitext(cargs.filepath)
     ffmpeg(
         False,
         "-filter_complex_script", fg.name,
         "-map", "[vout]", "-map", "[aout]",
-        "-c:v", "libx265", "-preset", "fast", "-crf", "33", f"{fout}.trimmed{ext}",
+        "-c:v", *get_enc_args(),
+        f"{fout}.trimmed{ext}",
+        vaapi=cargs.vaapi,
     )
 
-    if not args.keep:
-        os.remove(args.filepath)
+    if not cargs.keep:
+        os.remove(cargs.filepath)
