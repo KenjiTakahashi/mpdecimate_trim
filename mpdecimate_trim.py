@@ -58,7 +58,19 @@ def hwargs_transcode():
 
 
 def _ffmpeg(fi, co, *args, hwargs=[]):
-    return run(["ffmpeg", *hwargs, "-i", fi, *args], check=True, capture_output=co)
+    args = ["ffmpeg", *hwargs, "-i", fi, *args]
+    result = run(args, check=not co, capture_output=co)
+    if result.returncode == 0:
+        return result
+
+    print(f"Command {args} failed with code {result.returncode}")
+    print("--------    STDOUT S    --------")
+    print(result.stdout.decode())
+    print("--------    STDOUT E    --------")
+    print("--------    STDERR S    --------")
+    print(result.stderr.decode())
+    print("--------    STDERR E    --------")
+    sys.exit(3)
 
 
 ffmpeg = profd(partial(_ffmpeg, cargs.filepath))
