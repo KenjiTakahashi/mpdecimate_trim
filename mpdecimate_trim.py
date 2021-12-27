@@ -10,10 +10,14 @@ from subprocess import run
 from tempfile import NamedTemporaryFile
 
 
+sys.stdout = sys.stderr
+
+
 cargs = argparse.ArgumentParser(description="Trim video(+audio) clip, based on output from mpdecimate filter")
 cargs.add_argument("--skip", type=int, help="Skip trimming, if less than SKIP parts found")
 cargs.add_argument("--keep", action="store_true", help="Keep original file")
 cargs.add_argument("--vaapi", type=str, help="Use VA-API device for hardware accelerated transcoding")
+cargs.add_argument("--vaapi-decimate", nargs="?", const=True, help="Use VA-API device for hardware accelerated decimate filter")
 cargs.add_argument("filepath", help="File to trim")
 cargs = cargs.parse_args()
 
@@ -33,8 +37,27 @@ def profd(f):
     return a
 
 
-def _ffmpeg(fi, co, *args, vaapi=None):
-    hwargs = ["-hwaccel", "vaapi", "-hwaccel_device", vaapi, "-hwaccel_output_format", "vaapi"] if vaapi else []
+_hwargs = ["-hwaccel", "vaapi", "-hwaccel_device"]
+
+
+def hwargs_decimate():
+    if not cargs.vaapi_decimate:
+        return []
+
+    if cargs.vaapi_decimate is True:
+        if not cargs.vaapi:
+            raise Exception("--vaapi-decimate set to use --vaapi device, but --vaapi not set")
+
+        return [*_hwargs, cargs.vaapi]
+
+    return [*_hwargs, cargs.vaapi_decimate]
+
+
+def hwargs_transcode():
+    return [*_hwargs, cargs.vaapi, "-hwaccel_output_format", "vaapi"] if cargs.vaapi else []
+
+
+def _ffmpeg(fi, co, *args, hwargs=[]):
     return run(["ffmpeg", *hwargs, "-i", fi, *args], check=True, capture_output=co)
 
 
@@ -82,9 +105,15 @@ def get_dframes(mpdecimate):
     return [[f1, f2] for f1, f2 in dframes if f2 is None or f2 - f1 > 1]
 
 
-dframes2 = get_dframes(ffmpeg(True, "-vf", "mpdecimate=hi=576", "-loglevel", "debug", "-f", "null", "-").stderr)
+dframes2 = get_dframes(ffmpeg(
+    True,
+    "-vf", "mpdecimate=hi=576",
+    "-loglevel", "debug",
+    "-f", "null", "-",
+    hwargs=hwargs_decimate(),
+).stderr)
 if cargs.skip and len(dframes2) < cargs.skip:
-    print("less than 2 parts detected, avoiding re-encode")
+    print(f"less than {cargs.skip} parts detected, avoiding re-encode")
     sys.exit(2)
 
 
@@ -110,7 +139,7 @@ with NamedTemporaryFile(prefix="mpdecimate_trim.") as fg:
         "-map", "[vout]", "-map", "[aout]",
         "-c:v", *get_enc_args(),
         f"{fout}.trimmed{ext}",
-        vaapi=cargs.vaapi,
+        hwargs=hwargs_transcode(),
     )
 
     if not cargs.keep:
