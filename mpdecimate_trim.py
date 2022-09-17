@@ -15,7 +15,10 @@ sys.stdout = sys.stderr
 
 cargs = argparse.ArgumentParser(description="Trim video(+audio) clip, based on output from mpdecimate filter")
 cargs.add_argument("--skip", type=int, help="Skip trimming, if less than SKIP parts found")
-cargs.add_argument("--keep", action="store_true", help="Keep original file")
+#Rami changed default of keep to true, overwrite as default is dangerous, so now we have --del_source argument if is is needed to delete source file
+cargs.add_argument("--del_source", action="store_true", help="Delete original file", default=False)
+cargs.add_argument("--video_encoder", help="Video encoder(defult is libx264)", default="libx264")
+cargs.add_argument("--crf", help="Constant rate factor (CRF) - determine the quality of the encoding, default is 17 (very high quality), for lower video size use higher CRF values", default="17")
 cargs.add_argument("--vaapi", type=str, help="Use VA-API device for hardware accelerated transcoding")
 cargs.add_argument("--vaapi-decimate", nargs="?", const=True, help="Use VA-API device for hardware accelerated decimate filter")
 cargs.add_argument("filepath", help="File to trim")
@@ -59,11 +62,18 @@ def hwargs_transcode():
 
 def _ffmpeg(fi, co, *args, hwargs=[]):
     args = ["ffmpeg", *hwargs, "-i", fi, *args]
-    result = run(args, check=not co, capture_output=co)
+  	 # rami shell=false(default) is better https://stackoverflow.com/questions/3172470/actual-meaning-of-shell-true-in-subprocess 
+	 # rami use capture_output=True and print (result) show the result	 
+    result = run(args, capture_output=True, shell=False)
+    
+
     if result.returncode == 0:
         return result
 
     print(f"Command {args} failed with code {result.returncode}")
+ 	 # rami extra print, it might show more info
+    print("--------    Full Result String    --------")
+    print (result)
     print("--------    STDOUT S    --------")
     print(result.stdout.decode())
     print("--------    STDOUT E    --------")
@@ -116,7 +126,8 @@ def get_dframes(mpdecimate):
 
     return [[f1, f2] for f1, f2 in dframes if f2 is None or f2 - f1 > 1]
 
-
+#Rami info
+print ("\nStep1: Finding duplicated frames\n",flush=True)
 dframes2 = get_dframes(ffmpeg(
     True,
     "-vf", "mpdecimate=hi=576",
@@ -128,13 +139,13 @@ if cargs.skip and len(dframes2) < cargs.skip:
     print(f"less than {cargs.skip} parts detected, avoiding re-encode")
     sys.exit(2)
 
-
+# Rami - changed libx265 to libx264, and CRF 30 to 17 
 def get_enc_args():
     if cargs.vaapi:
         return ["hevc_vaapi", "-qp", "23"]
-    return ["libx265", "-preset", "fast", "-crf", "30"]
-
-with NamedTemporaryFile(prefix="mpdecimate_trim.") as fg:
+    return [{cargs.video_encoder}, "-preset", "fast", "-crf", {cargs.crf}]
+#Rami - I Added delete=False, as it was not working without it in my Windows enviroment
+with NamedTemporaryFile(prefix="mpdecimate_trim.",delete=False) as fg:
     for i, (s, e) in enumerate(dframes2):
         fg.write(trim(s, e, i))
         fg.write(b"\n")
@@ -145,14 +156,23 @@ with NamedTemporaryFile(prefix="mpdecimate_trim.") as fg:
     fg.flush()
 
     fout, ext = path.splitext(cargs.filepath)
+	 
+	 # Rami Added timestamp to filename so if the files exsist the program will not freeze
+    # Added AAC 160Kbit audio encoding instead of the default Vorbis	 
+    print ("\nStep2: Encoding the unduplicated frames\n",flush=True)
+    import time
+    timestr = time.strftime("%Y%m%d_%H%M%S") 
     ffmpeg(
         False,
         "-filter_complex_script", fg.name,
         "-map", "[vout]", "-map", "[aout]",
-        "-c:v", *get_enc_args(),
-        f"{fout}.trimmed{ext}",
+        "-c:v", *get_enc_args(), "-c:a","aac", "-b:a", "160k",
+        f"{fout}_{timestr}.trimmed{ext}",
         hwargs=hwargs_transcode(),
     )
-
-    if not cargs.keep:
+	 
+    if cargs.del_source:
+        print ("\nDeleting source file (--del_source was specified)")
         os.remove(cargs.filepath)
+    else:
+	     print ("\nKeeping source file {If you want to delete source file use --del_source}")
