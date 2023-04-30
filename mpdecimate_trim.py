@@ -18,6 +18,8 @@ cargs.add_argument("--skip", type=int, help="Skip trimming, if less than SKIP pa
 cargs.add_argument("--keep", action="store_true", help="Keep original file")
 cargs.add_argument("--vaapi", type=str, help="Use VA-API device for hardware accelerated transcoding")
 cargs.add_argument("--vaapi-decimate", nargs="?", const=True, help="Use VA-API device for hardware accelerated decimate filter")
+cargs.add_argument("--videotoolbox", action="store_true", help="Use Apple Video Toolbox for hardware accelerated transcoding")
+cargs.add_argument("--videotoolbox-decimate", action="store_true",help="Use Apple Video Toolbox for hardware accelerated decimate filter")
 cargs.add_argument("filepath", help="File to trim")
 cargs = cargs.parse_args()
 
@@ -26,7 +28,6 @@ def prof(s):
     e = time.time()
     print(time.strftime("%H:%M:%S", time.gmtime(e - s)))
     return e
-
 
 def profd(f):
     def a(*args, **kwargs):
@@ -37,10 +38,12 @@ def profd(f):
     return a
 
 
-_hwargs = ["-hwaccel", "vaapi", "-hwaccel_device"]
-
+_vaapi_args = ["-hwaccel", "vaapi", "-hwaccel_device"]
 
 def hwargs_decimate():
+    if cargs.videotoolbox_decimate:
+        return ["-hwaccel", "videotoolbox"]
+
     if not cargs.vaapi_decimate:
         return []
 
@@ -48,13 +51,12 @@ def hwargs_decimate():
         if not cargs.vaapi:
             raise Exception("--vaapi-decimate set to use --vaapi device, but --vaapi not set")
 
-        return [*_hwargs, cargs.vaapi]
+        return [*_vaapi_args, cargs.vaapi]
 
-    return [*_hwargs, cargs.vaapi_decimate]
-
+    return [*_vaapi_args, cargs.vaapi_decimate]
 
 def hwargs_transcode():
-    return [*_hwargs, cargs.vaapi, "-hwaccel_output_format", "vaapi"] if cargs.vaapi else []
+    return [*_vaapi_args, cargs.vaapi, "-hwaccel_output_format", "vaapi"] if cargs.vaapi else []
 
 
 def _ffmpeg(fi, co, *args, hwargs=[]):
@@ -130,6 +132,8 @@ if cargs.skip and len(dframes2) < cargs.skip:
 
 
 def get_enc_args():
+    if cargs.videotoolbox:
+        return ["hevc_videotoolbox", "-q:v", "65"]
     if cargs.vaapi:
         return ["hevc_vaapi", "-qp", "23"]
     return ["libx265", "-preset", "fast", "-crf", "30"]

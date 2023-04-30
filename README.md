@@ -20,7 +20,11 @@ By default, re-encode happens even if no fragments to trim are found. This can b
 
 The `--vaapi` option enables [VA-API](https://trac.ffmpeg.org/wiki/Hardware/VAAPI) based hardware accelerated transcoding. Note that the script does not check whether supplied input and/or available GPU are capable of performing the transcode, if they are not the process will fail.
 
-The `--vaapi-decimate` option enables VA-API based hardware accelerated decimate filter. If the optional device path is supplied, this device will be used. Otherwise, it will attempt to use device specified with `--vaapi` option. If neither device is specified, the script will fail. Note that on some older versions of `ffmpeg` this might fail even if VA-API transcoding works, not sure why. I have only tested this with `>=4.4.1`.
+The `--vaapi-decimate` option enables VA-API based hardware accelerated decimate filter. If the optional device path is supplied, this device will be used. Otherwise, it will attempt to use device specified with `--vaapi` option. If neither device is specified, the script will fail. Note that on some older versions of `ffmpeg` this might fail even if VA-API transcoding works, not sure why. I have only tested this with `ffmpeg>=4.4.1`.
+
+The `--videotoolbox` option enables Apple Video Toolbox based hardware accelerated transcoding. Note that this is super fast, but usually produces much bigger files than the CPU encoder. Only works on Apple Silicon machines and requires `ffmpeg>=4.4`.
+
+The `--videotoolbox-decimate` option enables Apple Video Toolbox based hardware accelerated decimate filter. Note that it is often much slower than the CPU version, use only if extensive CPU use is undesirable. Only works on Apple Silicon machines and requires `ffmpeg>=4.4`.
 
 # vs_decimate?
 
