@@ -21,6 +21,7 @@ cargs.add_argument("--vaapi", type=str, help="Use VA-API device for hardware acc
 cargs.add_argument("--vaapi-decimate", nargs="?", const=True, help="Use VA-API device for hardware accelerated decimate filter")
 cargs.add_argument("--videotoolbox", action="store_true", help="Use Apple Video Toolbox for hardware accelerated transcoding")
 cargs.add_argument("--videotoolbox-decimate", action="store_true",help="Use Apple Video Toolbox for hardware accelerated decimate filter")
+cargs.add_argument("--debug", action="store_true", help="Do not remove anything even on successful run. Use loglevel debug for all ffmpeg calls")
 cargs.add_argument("filepath", help="File to trim")
 cargs = cargs.parse_args()
 
@@ -75,6 +76,7 @@ def _ffmpeg(fi, co, *args, hwargs=[]):
     print(f"The {phase} phase is starting with command `{' '.join(args)}`")
     print(f"See {log_file_out} for standard output capture")
     print(f"See {log_file_err} for standard error capture")
+
     with open(log_file_out, "w") as out, open(log_file_err, "w") as err:
         result = run(args, stdout=out, stderr=err)
         if result.returncode == 0:
@@ -184,8 +186,13 @@ ffmpeg(
     "-c:v", *get_enc_args(),
     f"{fout}.trimmed{ext}",
     hwargs=hwargs_transcode(),
+    *(["-loglevel", "debug"] if cargs.debug else []),
 )
 
+
+if cargs.debug:
+    print("Debug enabled, not removing anything")
+    sys.exit(0)
 
 if not cargs.keep:
     print(f"Removing the original file at {cargs.filepath}")

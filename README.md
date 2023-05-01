@@ -9,7 +9,7 @@ Note also that some variables, such as mpdecimate thresholds or output codec set
 Needs `Python3.7+` and `ffmpeg`.
 
 ```bash
-$ mpdecimate_trim.py [--skip SKIP] [--keep] [--vaapi <render_device_filepath>] [--vaapi-decimate [render_device_filepath]] <filepath>
+$ mpdecimate_trim.py [--keep] [--skip SKIP] [--vaapi <render_device_filepath>] [--vaapi-decimate [render_device_filepath]] [--videotoolbox] [--videotoolbox-decimate] [--debug] <filepath>
 ```
 
 This will take file at `<filepath>`, detect frames with certain similarity, re-encode it with them removed (using `libx265`/`hevc_vaapi`) and delete the original file.
@@ -25,6 +25,8 @@ The `--vaapi-decimate` option enables VA-API based hardware accelerated decimate
 The `--videotoolbox` option enables Apple Video Toolbox based hardware accelerated transcoding. Note that this is super fast, but usually produces much bigger files than the CPU encoder. Only works on Apple Silicon machines and requires `ffmpeg>=4.4`.
 
 The `--videotoolbox-decimate` option enables Apple Video Toolbox based hardware accelerated decimate filter. Note that it is often much slower than the CPU version, use only if extensive CPU use is undesirable. Only works on Apple Silicon machines and requires `ffmpeg>=4.4`.
+
+The `--debug` flag prevents anything (both temporary and input) from getting removed, no matter if the script succeeded or not. Also enables debug loglevel for `ffmpeg` runs.
 
 ## The ffmpeg run turned interactive!
 
