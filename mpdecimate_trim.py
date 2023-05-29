@@ -73,15 +73,17 @@ def _ffmpeg(fi, co, *args, hwargs=[]):
 
     args = ["ffmpeg", *hwargs, "-i", fi, *args]
 
-    print(f"The {phase} phase is starting with command `{' '.join(args)}`")
-    print(f"See {log_file_out} for standard output capture")
-    print(f"See {log_file_err} for standard error capture")
+    args_for_log = " ".join(arg.replace(" ", "\\ ") for arg in args)
+    print(f"The {phase} phase is starting with command `{args_for_log}`")
+    print(f"Standard output capture: {log_file_out}")
+    print(f"Standard error capture: {log_file_err}")
 
     with open(log_file_out, "w") as out, open(log_file_err, "w") as err:
         result = run(args, stdout=out, stderr=err)
+        out.flush()
+        err.flush()
         if result.returncode == 0:
             if co:
-                err.flush()
                 return log_file_err
             return
 
@@ -154,7 +156,7 @@ filter_fn = path.join(tempdir, "mpdecimate_filter")
 @profd
 def write_filter():
     print(f"The {phase} phase is starting")
-    print(f"See {filter_fn} for the filter definition")
+    print(f"Filter definition: {filter_fn}")
 
     with open(filter_fn, "wb") as fg:
         for i, (s, e) in enumerate(dframes2):
