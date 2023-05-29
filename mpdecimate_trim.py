@@ -2,6 +2,7 @@
 
 import argparse
 import os
+import re
 import sys
 import time
 from functools import partial
@@ -22,6 +23,7 @@ cargs.add_argument("--vaapi-decimate", nargs="?", const=True, help="Use VA-API d
 cargs.add_argument("--videotoolbox", action="store_true", help="Use Apple Video Toolbox for hardware accelerated transcoding")
 cargs.add_argument("--videotoolbox-decimate", action="store_true",help="Use Apple Video Toolbox for hardware accelerated decimate filter")
 cargs.add_argument("--debug", action="store_true", help="Do not remove anything even on successful run. Use loglevel debug for all ffmpeg calls")
+cargs.add_argument("--output-to-cwd", action="store_true", help="")
 cargs.add_argument("filepath", help="File to trim")
 cargs = cargs.parse_args()
 
@@ -95,60 +97,57 @@ def _ffmpeg(fi, co, *args, hwargs=[]):
 ffmpeg = profd(partial(_ffmpeg, cargs.filepath))
 
 
-def trim(s, e, i, b1=b"v", b2=b""):
-    trim = b"%f:%f" % (s, e) if e is not None else b"%f" % s
-    return b"[0:%b]%btrim=%b,%bsetpts=PTS-STARTPTS[%b%d];" % (b1, b2, trim, b2, b1, i)
-
-atrim = partial(trim, b1=b"a", b2=b"a")
-
-
-def get_dframes(mpdecimate_fn):
-    dframes = []
-    with open(mpdecimate_fn) as mpdecimate:
-        for line in mpdecimate:
-            try:
-                drop_count = int(line.split(" drop_count:")[1])
-            except IndexError:
-                continue
-            pts_time = line.split("pts_time:")[1].split(" ")[0]
-
-            if drop_count == -1:
-                pts_time = float(pts_time)
-                if dframes:
-                    ff1, ff2 = dframes[-1]
-                    if pts_time - ff2 < 10:
-                        dframes[-1][1] = pts_time
-                        continue
-
-                dframes.append([pts_time])
-            elif drop_count == 1 and dframes:
-                pts_time = float(pts_time)
-                if len(dframes[-1]) == 2:
-                    dframes[-1][1] = pts_time
-                else:
-                    dframes[-1].append(pts_time)
-
-    if len(dframes[-1]) == 1:
-        dframes[-1].append(None)
-    elif drop_count < 0:
-        dframes[-1][1] = None
-
-    return [[f1, f2] for f1, f2 in dframes if f2 is None or f2 - f1 > 1]
-
-
-dframes2 = get_dframes(ffmpeg(
+mpdecimate_fn = ffmpeg(
     True,
     "-vf", "mpdecimate=hi=576",
     "-loglevel", "debug",
     "-f", "null", "-",
     hwargs=hwargs_decimate(),
-))
-if cargs.skip and len(dframes2) < cargs.skip:
-    print(f"less than {cargs.skip} parts detected, avoiding re-encode")
-    sys.exit(2)
+)
 
 
 phase = "filter creation"
+
+
+re_decimate = re.compile(r"^.* (keep|drop) pts:(\d+) pts_time:(\d+(?:\.\d+)?) drop_count:-?\d+$")
+re_audio_in = re.compile(r"^\s*Input stream #\d:\d \(audio\): \d+ packets read \(\d+ bytes\); \d+ frames decoded \(\d+ samples\);\s*$")
+re_audio_out = re.compile(r"^\s*Output stream #\d:\d \(audio\): \d+ frames encoded \(\d+ samples\); \d+ packets muxed \(\d+ bytes\);\s*$")
+
+def get_frames_to_keep(mpdecimate_fn):
+    to_keep = []
+    dropping = True
+
+    has_audio_in = False
+    has_audio_out = False
+
+    with open(mpdecimate_fn) as mpdecimate:
+        for line in mpdecimate:
+            values = re_decimate.findall(line)
+            if not values:
+                has_audio_in = has_audio_in or re_audio_in.fullmatch(line)
+                has_audio_out = has_audio_out or re_audio_out.fullmatch(line)
+                continue
+            values = values[0]
+            keep = values[0] == "keep"
+            pts_time = float(values[2])
+
+            if keep and dropping:
+                to_keep.append([pts_time, None])
+                dropping = False
+            elif not keep and not dropping:
+                to_keep[-1][1] = pts_time
+                dropping = True
+
+                if cargs.debug:
+                    print(f"Keeping times {to_keep[-1][0]}-{to_keep[-1][1]}")
+
+    return (to_keep, bool(has_audio_in and has_audio_out))
+
+def trim(s, e, i, b1=b"v", b2=b""):
+    trim = b"%f:%f" % (s, e) if e is not None else b"%f" % s
+    return b"[0:%b]%btrim=%b,%bsetpts=PTS-STARTPTS[%b%d];" % (b1, b2, trim, b2, b1, i)
+
+atrim = partial(trim, b1=b"a", b2=b"a")
 
 
 filter_fn = path.join(tempdir, "mpdecimate_filter")
@@ -158,17 +157,24 @@ def write_filter():
     print(f"The {phase} phase is starting")
     print(f"Filter definition: {filter_fn}")
 
+    frames_to_keep, has_audio = get_frames_to_keep(mpdecimate_fn)
+    print(has_audio)
+    if cargs.skip and len(frames_to_keep) < cargs.skip:
+        print(f"Less than {cargs.skip} parts detected, avoiding re-encode")
+        sys.exit(2)
+
     with open(filter_fn, "wb") as fg:
-        for i, (s, e) in enumerate(dframes2):
+        for i, (s, e) in enumerate(frames_to_keep):
             fg.write(trim(s, e, i))
             fg.write(b"\n")
             fg.write(atrim(s, e, i))
             fg.write(b"\n")
-        fg.write(b"".join(b"[v%d][a%d]" % (i, i) for i in range(len(dframes2))))
-        fg.write(b"concat=n=%d:a=1[vout][aout]" % len(dframes2))
+        fg.write(b"".join(b"[v%d][a%d]" % (i, i) for i in range(len(frames_to_keep))))
+        fg.write(b"concat=n=%d:a=1[vout][aout]" % len(frames_to_keep))
         fg.flush()
 
 write_filter()
+
 
 phase = "transcode"
 
@@ -181,6 +187,8 @@ def get_enc_args():
     return ["libx265", "-preset", "fast", "-crf", "30"]
 
 fout, ext = path.splitext(cargs.filepath)
+if cargs.output_to_cwd:
+    fout = path.basename(fout)
 ffmpeg(
     False,
     "-filter_complex_script", filter_fn,
