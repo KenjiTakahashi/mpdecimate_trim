@@ -109,9 +109,32 @@ mpdecimate_fn = ffmpeg(
 phase = "filter creation"
 
 
-re_decimate = re.compile(r"^.* (keep|drop) pts:\d+ pts_time:(\d+(?:\.\d+)?) drop_count:-?\d+$")
-re_audio_in = re.compile(r"^\s*Input stream #\d:\d \(audio\): \d+ packets read \(\d+ bytes\); \d+ frames decoded \(\d+ samples\);\s*$")
-re_audio_out = re.compile(r"^\s*Output stream #\d:\d \(audio\): \d+ frames encoded \(\d+ samples\); \d+ packets muxed \(\d+ bytes\);\s*$")
+re_decimate = re.compile(
+    r"^.*"
+    r" (keep|drop)"
+    r" pts:\d+"
+    r" pts_time:(\d+(?:\.\d+)?)"
+    r" drop_count:-?\d+"
+    r"(?: keep_count:-?\d+)?$"
+)
+re_audio_in = re.compile(
+    r"^(?:\[.*\])?\s*"
+    r"Input stream #\d:\d"
+    r" \(audio\):"
+    r" \d+ packets read \(\d+ bytes\);"
+    r" \d+ frames decoded"
+    r"(?:; \d+ decode errors)?"
+    r" \(\d+ samples\);"
+    r"\s*$"
+)
+re_audio_out = re.compile(
+    r"^(?:\[.*\])?\s*"
+    r"Output stream #\d:\d"
+    r" \(audio\):"
+    r" \d+ frames encoded \(\d+ samples\);"
+    r" \d+ packets muxed \(\d+ bytes\);"
+    r"\s*$"
+)
 
 def get_frames_to_keep(mpdecimate_fn):
     to_keep = []
