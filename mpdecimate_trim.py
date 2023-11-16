@@ -23,7 +23,7 @@ cargs.add_argument("--vaapi-decimate", nargs="?", const=True, help="Use VA-API d
 cargs.add_argument("--videotoolbox", action="store_true", help="Use Apple Video Toolbox for hardware accelerated transcoding")
 cargs.add_argument("--videotoolbox-decimate", action="store_true",help="Use Apple Video Toolbox for hardware accelerated decimate filter")
 cargs.add_argument("--debug", action="store_true", help="Do not remove anything even on successful run. Use loglevel debug for all ffmpeg calls")
-cargs.add_argument("--output-to-cwd", action="store_true", help="")
+cargs.add_argument("--output-to-cwd", action="store_true", help="Save output file to where the script is run (default is location of the input file)")
 cargs.add_argument("filepath", help="File to trim")
 cargs = cargs.parse_args()
 
@@ -68,12 +68,13 @@ def hwargs_decimate():
 def hwargs_transcode():
     return [*_vaapi_args, cargs.vaapi, "-hwaccel_output_format", "vaapi"] if cargs.vaapi else []
 
-def _ffmpeg(fi, co, *args, hwargs=[]):
+@profd
+def ffmpeg(co, *args):
     log_file_base = path.join(tempdir,  f"{phase}")
     log_file_out = f"{log_file_base}.stdout.log"
     log_file_err = f"{log_file_base}.stderr.log"
 
-    args = ["ffmpeg", *hwargs, "-i", fi, *args]
+    args = ["ffmpeg", *args]
 
     args_for_log = " ".join(arg.replace(" ", "\\ ") for arg in args)
     print(f"The {phase} phase is starting with command `{args_for_log}`")
@@ -94,22 +95,21 @@ def _ffmpeg(fi, co, *args, hwargs=[]):
 
     sys.exit(3)
 
-ffmpeg = profd(partial(_ffmpeg, cargs.filepath))
-
 
 mpdecimate_fn = ffmpeg(
     True,
-    "-vf", "mpdecimate=hi=576",
+    *hwargs_decimate(),
+    "-i", cargs.filepath,
+    "-vf", "mpdecimate=lo=64*4:hi=64*10",
     "-loglevel", "debug",
     "-f", "null", "-",
-    hwargs=hwargs_decimate(),
 )
 
 
 phase = "filter creation"
 
 
-re_decimate = re.compile(r"^.* (keep|drop) pts:(\d+) pts_time:(\d+(?:\.\d+)?) drop_count:-?\d+$")
+re_decimate = re.compile(r"^.* (keep|drop) pts:\d+ pts_time:(\d+(?:\.\d+)?) drop_count:-?\d+$")
 re_audio_in = re.compile(r"^\s*Input stream #\d:\d \(audio\): \d+ packets read \(\d+ bytes\); \d+ frames decoded \(\d+ samples\);\s*$")
 re_audio_out = re.compile(r"^\s*Output stream #\d:\d \(audio\): \d+ frames encoded \(\d+ samples\); \d+ packets muxed \(\d+ bytes\);\s*$")
 
@@ -129,7 +129,7 @@ def get_frames_to_keep(mpdecimate_fn):
                 continue
             values = values[0]
             keep = values[0] == "keep"
-            pts_time = float(values[2])
+            pts_time = values[1]
 
             if keep and dropping:
                 to_keep.append([pts_time, None])
@@ -142,12 +142,6 @@ def get_frames_to_keep(mpdecimate_fn):
                     print(f"Keeping times {to_keep[-1][0]}-{to_keep[-1][1]}")
 
     return (to_keep, bool(has_audio_in and has_audio_out))
-
-def trim(s, e, i, b1=b"v", b2=b""):
-    trim = b"%f:%f" % (s, e) if e is not None else b"%f" % s
-    return b"[0:%b]%btrim=%b,%bsetpts=PTS-STARTPTS[%b%d];" % (b1, b2, trim, b2, b1, i)
-
-atrim = partial(trim, b1=b"a", b2=b"a")
 
 
 filter_fn = path.join(tempdir, "mpdecimate_filter")
@@ -163,14 +157,15 @@ def write_filter():
         print(f"Less than {cargs.skip} parts detected, avoiding re-encode")
         sys.exit(2)
 
-    with open(filter_fn, "wb") as fg:
+    with open(filter_fn, "w") as fg:
+        fg.write("ffconcat version 1.0\n")
         for i, (s, e) in enumerate(frames_to_keep):
-            fg.write(trim(s, e, i))
-            fg.write(b"\n")
-            fg.write(atrim(s, e, i))
-            fg.write(b"\n")
-        fg.write(b"".join(b"[v%d][a%d]" % (i, i) for i in range(len(frames_to_keep))))
-        fg.write(b"concat=n=%d:a=1[vout][aout]" % len(frames_to_keep))
+            # NOTE ffconcat takes paths relative to its location, *not* cwd.
+            # Need to supply absolute path for it to find the input file.
+            fg.write(f"\nfile '{path.abspath(cargs.filepath)}'\n")
+            fg.write(f"inpoint {s}\n")
+            if e is not None:
+                fg.write(f"outpoint {e}\n")
         fg.flush()
 
 write_filter()
@@ -183,7 +178,7 @@ def get_enc_args():
     if cargs.videotoolbox:
         return ["hevc_videotoolbox", "-q:v", "65"]
     if cargs.vaapi:
-        return ["hevc_vaapi", "-qp", "23"]
+        return ["hevc_vaapi", "-qp", "24"]
     return ["libx265", "-preset", "fast", "-crf", "30"]
 
 fout, ext = path.splitext(cargs.filepath)
@@ -191,12 +186,15 @@ if cargs.output_to_cwd:
     fout = path.basename(fout)
 ffmpeg(
     False,
-    "-filter_complex_script", filter_fn,
-    "-map", "[vout]", "-map", "[aout]",
+    *(["-loglevel", "debug"] if cargs.debug else []),
+    *hwargs_transcode(),
+    "-safe", "0", "-segment_time_metadata", "1",
+    "-i", filter_fn,
+    "-af", "aselect=concatdec_select",
+    # XXX The part below doesn't seem necessary, but leaving it here just in case.
+    # "-vf", "select=concatdec_select",
     "-c:v", *get_enc_args(),
     f"{fout}.trimmed{ext}",
-    hwargs=hwargs_transcode(),
-    *(["-loglevel", "debug"] if cargs.debug else []),
 )
 
 
