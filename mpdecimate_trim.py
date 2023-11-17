@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 
 import argparse
+import logging
 import os
 import re
 import sys
@@ -10,9 +11,6 @@ from os import path
 from shutil import rmtree
 from subprocess import run
 from tempfile import mkdtemp
-
-
-sys.stdout = sys.stderr
 
 
 cargs = argparse.ArgumentParser(description="Trim video(+audio) clip, based on output from mpdecimate filter")
@@ -28,12 +26,19 @@ cargs.add_argument("filepath", help="File to trim")
 cargs = cargs.parse_args()
 
 
+logging.basicConfig(
+    format="%(asctime)s[%(levelname).1s] %(message)s",
+    datefmt="%Y-%m-%d %H:%M:%S",
+    level=logging.DEBUG if cargs.debug else logging.INFO,
+)
+
+
 phase = "decimate"
 
 
 def prof(s):
     e = time.time()
-    print(f"The {phase} phase took {time.strftime('%H:%M:%S', time.gmtime(e - s))}")
+    logging.info(f"The {phase} phase took {time.strftime('%H:%M:%S', time.gmtime(e - s))}")
     return e
 
 def profd(f):
@@ -77,9 +82,9 @@ def ffmpeg(co, *args):
     args = ["ffmpeg", *args]
 
     args_for_log = " ".join(arg.replace(" ", "\\ ") for arg in args)
-    print(f"The {phase} phase is starting with command `{args_for_log}`")
-    print(f"Standard output capture: {log_file_out}")
-    print(f"Standard error capture: {log_file_err}")
+    logging.info(f"The {phase} phase is starting with command `{args_for_log}`")
+    logging.info(f"Standard output capture: {log_file_out}")
+    logging.info(f"Standard error capture: {log_file_err}")
 
     with open(log_file_out, "w") as out, open(log_file_err, "w") as err:
         result = run(args, stdout=out, stderr=err)
@@ -90,9 +95,8 @@ def ffmpeg(co, *args):
                 return log_file_err
             return
 
-        print(f"The {phase} phase failed with code {result.returncode}")
-        print("See above for where to look for details")
-
+        logging.error(f"The {phase} phase failed with code {result.returncode}")
+    logging.error("See above for where to look for details")
     sys.exit(3)
 
 
@@ -162,7 +166,7 @@ def get_frames_to_keep(mpdecimate_fn):
                 dropping = True
 
                 if cargs.debug:
-                    print(f"Keeping times {to_keep[-1][0]}-{to_keep[-1][1]}")
+                    logging.debug(f"Keeping times {to_keep[-1][0]}-{to_keep[-1][1]}")
 
     return (to_keep, bool(has_audio_in and has_audio_out))
 
@@ -171,13 +175,14 @@ filter_fn = path.join(tempdir, "mpdecimate_filter")
 
 @profd
 def write_filter():
-    print(f"The {phase} phase is starting")
-    print(f"Filter definition: {filter_fn}")
+    logging.info(f"The {phase} phase is starting")
+    logging.info(f"Filter definition: {filter_fn}")
 
     frames_to_keep, has_audio = get_frames_to_keep(mpdecimate_fn)
-    print(has_audio)
+    if cargs.debug:
+        logging.debug(f"Has audio: {has_audio}")
     if cargs.skip and len(frames_to_keep) < cargs.skip:
-        print(f"Less than {cargs.skip} parts detected, avoiding re-encode")
+        logging.warn(f"Less than {cargs.skip} parts detected, avoiding re-encode")
         sys.exit(2)
 
     with open(filter_fn, "w") as fg:
@@ -222,11 +227,11 @@ ffmpeg(
 
 
 if cargs.debug:
-    print("Debug enabled, not removing anything")
+    logging.debug("Debug enabled, not removing anything")
     sys.exit(0)
 
 if not cargs.keep:
-    print(f"Removing the original file at {cargs.filepath}")
+    logging.info(f"Removing the original file at {cargs.filepath}")
     os.remove(cargs.filepath)
 
 rmtree(tempdir)
