@@ -86,7 +86,7 @@ def ffmpeg(co, *args):
     logging.info(f"Standard output capture: {log_file_out}")
     logging.info(f"Standard error capture: {log_file_err}")
 
-    with open(log_file_out, "w") as out, open(log_file_err, "w") as err:
+    with open(log_file_out, "w", encoding="utf8") as out, open(log_file_err, "w", encoding="utf8") as err:
         result = run(args, stdout=out, stderr=err)
         out.flush()
         err.flush()
@@ -147,7 +147,7 @@ def get_frames_to_keep(mpdecimate_fn):
     has_audio_in = False
     has_audio_out = False
 
-    with open(mpdecimate_fn) as mpdecimate:
+    with open(mpdecimate_fn, encoding="utf8") as mpdecimate:
         for line in mpdecimate:
             values = re_decimate.findall(line)
             if not values:
@@ -185,7 +185,7 @@ def write_filter():
         logging.warn(f"Less than {cargs.skip} parts detected, avoiding re-encode")
         sys.exit(2)
 
-    with open(filter_fn, "w") as fg:
+    with open(filter_fn, "w", encoding="utf8") as fg:
         fg.write("ffconcat version 1.0\n")
         for i, (s, e) in enumerate(frames_to_keep):
             # NOTE ffconcat takes paths relative to its location, *not* cwd.
