@@ -43,7 +43,9 @@ def set_phase(p):
     global report_file
     report_file = path.join(tempdir, f"ffmpeg_report_{phase}.log")
     report_level = '48' if phase == "decimate" or cargs.debug else '-8'
-    environ['FFREPORT'] = "level={}:file={}".format(report_level, report_file.replace(":", "\\:"))
+    # Special characters or options delimiter ':' inside option values need escaping
+    # See: https://ffmpeg.org/ffmpeg.html#Generic-options (-report)
+    environ['FFREPORT'] = "level={}:file={}".format(report_level, report_file.replace('\\', '\\\\').replace(":", "\\:"))
 
 
 set_phase("decimate")
