@@ -7,7 +7,7 @@ import re
 import sys
 import time
 from functools import partial
-from os import path
+from os import path, environ
 from shutil import rmtree
 from subprocess import run
 from tempfile import mkdtemp
@@ -27,13 +27,28 @@ cargs = cargs.parse_args()
 
 
 logging.basicConfig(
-    format="%(asctime)s[%(levelname).1s] %(message)s",
+    format="[%(module)s][%(levelname).1s] %(asctime)s %(message)s",
     datefmt="%Y-%m-%d %H:%M:%S",
     level=logging.DEBUG if cargs.debug else logging.INFO,
 )
 
 
-phase = "decimate"
+tempdir = mkdtemp(prefix="mpdecimate_trim.")
+lognote = f"Logs can be found at: {tempdir}"
+
+
+def set_phase(p):
+    global phase
+    phase = p
+    global report_file
+    report_file = path.join(tempdir, f"ffmpeg_report_{phase}.log")
+    report_level = '48' if phase == "decimate" or cargs.debug else '-8'
+    # Special characters or options delimiter ':' inside option values need escaping
+    # See: https://ffmpeg.org/ffmpeg.html#Generic-options (-report)
+    environ['FFREPORT'] = "level={}:file={}".format(report_level, report_file.replace('\\', '\\\\').replace(":", "\\:"))
+
+
+set_phase("decimate")
 
 
 def prof(s):
@@ -48,9 +63,6 @@ def profd(f):
         prof(s)
         return r
     return a
-
-
-tempdir = mkdtemp(prefix="mpdecimate_trim.")
 
 
 _vaapi_args = ["-hwaccel", "vaapi", "-hwaccel_device"]
@@ -74,43 +86,31 @@ def hwargs_transcode():
     return [*_vaapi_args, cargs.vaapi, "-hwaccel_output_format", "vaapi"] if cargs.vaapi else []
 
 @profd
-def ffmpeg(co, *args):
-    log_file_base = path.join(tempdir,  f"{phase}")
-    log_file_out = f"{log_file_base}.stdout.log"
-    log_file_err = f"{log_file_base}.stderr.log"
-
+def ffmpeg(*args):
     args = ["ffmpeg", *args]
 
     args_for_log = " ".join(arg.replace(" ", "\\ ") for arg in args)
     logging.info(f"The {phase} phase is starting with command `{args_for_log}`")
-    logging.info(f"Standard output capture: {log_file_out}")
-    logging.info(f"Standard error capture: {log_file_err}")
 
-    with open(log_file_out, "w", encoding="utf8") as out, open(log_file_err, "w", encoding="utf8") as err:
-        result = run(args, stdout=out, stderr=err)
-        out.flush()
-        err.flush()
-        if result.returncode == 0:
-            if co:
-                return log_file_err
-            return
+    result = run(args)
+    if result.returncode == 0:
+        return report_file
 
-        logging.error(f"The {phase} phase failed with code {result.returncode}")
-    logging.error("See above for where to look for details")
+    logging.error(f"The {phase} phase failed with code {result.returncode}")
+    logging.error(lognote)
     sys.exit(3)
 
 
 mpdecimate_fn = ffmpeg(
-    True,
     *hwargs_decimate(),
     "-i", cargs.filepath,
     "-vf", "mpdecimate=lo=64*4:hi=64*10",
-    "-loglevel", "debug",
+    "-loglevel", "warning",
     "-f", "null", "-",
 )
 
 
-phase = "filter creation"
+set_phase("filter_creation")
 
 
 re_decimate = re.compile(
@@ -199,7 +199,7 @@ def write_filter():
 write_filter()
 
 
-phase = "transcode"
+set_phase("transcode")
 
 
 def get_enc_args():
@@ -213,14 +213,13 @@ fout, ext = path.splitext(cargs.filepath)
 if cargs.output_to_cwd:
     fout = path.basename(fout)
 ffmpeg(
-    False,
-    *(["-loglevel", "debug"] if cargs.debug else []),
+    "-loglevel", "warning", "-stats",
     *hwargs_transcode(),
     "-safe", "0", "-segment_time_metadata", "1",
     "-i", filter_fn,
     "-af", "aselect=concatdec_select",
     # XXX The part below doesn't seem necessary, but leaving it here just in case.
-    # "-vf", "select=concatdec_select",
+    "-vf", "select=concatdec_select",
     "-c:v", *get_enc_args(),
     f"{fout}.trimmed{ext}",
 )
@@ -228,6 +227,7 @@ ffmpeg(
 
 if cargs.debug:
     logging.debug("Debug enabled, not removing anything")
+    logging.debug(lognote)
     sys.exit(0)
 
 if not cargs.keep:

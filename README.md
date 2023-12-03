@@ -28,12 +28,6 @@ The `--videotoolbox-decimate` option enables Apple Video Toolbox based hardware 
 
 The `--debug` flag prevents anything (both temporary and input) from getting removed, no matter if the script succeeded or not. Also enables debug loglevel for `ffmpeg` runs.
 
-## The ffmpeg run turned interactive!
-
-This can happen for example when the output file already exists. It may seems like the script is stuck, but really it is just waiting for user input.
-
-Even though the _output_ is not visible, because it is redirected to a log file, you can still provide the _input_ as usual. So, to confirm overwriting existing file, just type `y<Enter>` like you normally would.
-
 # vs_decimate?
 
 Was a different experiment, using `vapoursynth`. Abandoned, because its' decimation algorithm does not fit my needs, and the whole process is also noticeably slower.
